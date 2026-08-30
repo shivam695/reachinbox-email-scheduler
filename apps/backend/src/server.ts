@@ -1,3 +1,9 @@
+import {
+  buildGoogleAuthUrl,
+  exchangeGoogleCode,
+  findOrCreateUser,
+} from "./integrations/google/googleService";
+import session from "express-session";
 import { createBullBoard } from "@bull-board/api";
 import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
 import { ExpressAdapter } from "@bull-board/express";
@@ -26,6 +32,15 @@ createBullBoard({
 app.use("/admin/queues", serverAdapter.getRouter());
 
 app.use(express.json());
+
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "dev-secret-change-in-production",
+    resave: false,
+    saveUninitialized: false,
+    cookie: { httpOnly: true, maxAge: 1000 * 60 * 60 * 24 }, // 1 day
+  })
+);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", message: "ReachInbox backend is alive!" });
@@ -121,6 +136,48 @@ app.get("/api/slack/status", async (req, res) => {
   res.json({ connected: !!connection, teamName: connection?.teamName ?? null });
 });
 
+// GOOGLE: Step 1 — redirect user to Google's login page
+app.get("/api/auth/google", (req, res) => {
+  res.redirect(buildGoogleAuthUrl());
+});
+
+// GOOGLE: Step 2 — Google redirects back here after login
+app.get("/api/auth/google/callback", async (req, res) => {
+  try {
+    const code = req.query.code as string;
+    const profile = await exchangeGoogleCode(code);
+    const user = await findOrCreateUser(profile);
+
+    // Save this user's id into the session — this is what "logs them in"
+    (req.session as any).userId = user.id;
+
+    res.redirect(`${process.env.FRONTEND_URL || "http://localhost:5173"}/dashboard`);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send("Google login failed.");
+  }
+});
+
+// Check who is currently logged in
+app.get("/api/auth/me", async (req, res) => {
+  const userId = (req.session as any).userId;
+
+  if (!userId) {
+    return res.status(401).json({ error: "Not logged in" });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  res.json(user);
+});
+
+// Log out
+app.post("/api/auth/logout", (req, res) => {
+  req.session.destroy(() => {
+    res.json({ success: true });
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
+
