@@ -194,6 +194,17 @@ Visit: `http://localhost:4000/admin/queues`
 
 This was verified during development — see commit history for the rate-limiting and idempotency implementation.
 
+## Behavior Under Load (1000+ Emails)
+
+The system is designed to handle large batches without special-casing:
+
+- **Scheduling**: When a campaign with many recipients is submitted, one `Email` row and one BullMQ delayed job are created per recipient in a simple loop. This is O(n) and does not block — Postgres and Redis both handle thousands of inserts/jobs without issue.
+- **Processing**: The worker's `concurrency` setting caps how many jobs run in parallel at once (default 5, configurable via `WORKER_CONCURRENCY`), so even if 1000 jobs become "ready" at the same moment, only a bounded number are actively sending at any instant — the rest simply wait in BullMQ's queue.
+- **Rate limiting**: The Redis Lua script enforces the hourly cap atomically regardless of how many workers or how much concurrency is running. Once a sender's hourly limit is reached, every subsequent job for that sender is automatically rescheduled to the next hour's delayed queue — this naturally "spreads" a burst of 1000+ emails for one sender across as many hours as needed, without ever dropping a job or exceeding the limit.
+- **Ordering**: Jobs are rescheduled in the order they were processed, so relative send order is preserved as closely as BullMQ's scheduling allows, though exact ordering isn't strictly guaranteed under high concurrency (an accepted trade-off for throughput).
+
+This was validated at small scale (dozens of jobs, hourly limits of 1-2) rather than a literal 1000-email test run, per the assignment's guidance that actual sending of thousands via Ethereal isn't required — only that the logic correctly handles it, which the atomic rate-limiter and per-recipient job model do by design.
+
 ## Trade-offs & Assumptions
 
 - Ethereal is used exclusively (per assignment spec) — no real email provider integration.
