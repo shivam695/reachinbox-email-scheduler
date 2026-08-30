@@ -14,6 +14,8 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Email[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [slackConnected, setSlackConnected] = useState(false);
+  const [slackTeamName, setSlackTeamName] = useState<string | null>(null);
 
   const fetchEmails = () => {
     setLoadingEmails(true);
@@ -43,6 +45,17 @@ export default function Dashboard() {
     }
   };
 
+  const fetchSlackStatus = () => {
+    if (!user) return;
+    api
+      .get("/api/slack/status", { params: { userId: user.id } })
+      .then((res) => {
+        setSlackConnected(res.data.connected);
+        setSlackTeamName(res.data.teamName);
+      })
+      .catch(() => setSlackConnected(false));
+  };
+
   useEffect(() => {
     fetchEmails();
   }, [tab]);
@@ -54,9 +67,18 @@ export default function Dashboard() {
     return () => clearTimeout(timeout);
   }, [searchQuery]);
 
+  useEffect(() => {
+    fetchSlackStatus();
+  }, [user]);
+
   const handleLogout = async () => {
     await api.post("/api/auth/logout");
     refetch();
+  };
+
+  const handleConnectSlack = () => {
+    if (!user) return;
+    window.location.href = `http://localhost:4000/api/slack/connect?userId=${user.id}`;
   };
 
   if (authLoading) {
@@ -99,6 +121,28 @@ export default function Dashboard() {
 
       {/* Main content */}
       <main className="p-6 max-w-5xl mx-auto">
+        {/* Slack connection card */}
+        <div className="bg-slate-800 rounded-xl p-4 mb-4 flex items-center justify-between">
+          <div>
+            <p className="text-white font-medium text-sm">Slack</p>
+            {slackConnected ? (
+              <p className="text-green-400 text-xs mt-0.5">
+                Connected {slackTeamName ? `to "${slackTeamName}"` : ""} ✓
+              </p>
+            ) : (
+              <p className="text-slate-400 text-xs mt-0.5">Not connected</p>
+            )}
+          </div>
+          {!slackConnected && (
+            <button
+              onClick={handleConnectSlack}
+              className="bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium px-4 py-2 rounded-lg"
+            >
+              Connect Slack
+            </button>
+          )}
+        </div>
+
         <div className="mb-4">
           <input
             type="text"
