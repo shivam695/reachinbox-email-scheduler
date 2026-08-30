@@ -1,8 +1,10 @@
 import "dotenv/config";
 import { Worker } from "bullmq";
 import { redisConnection } from "../queues/connection";
+import { emailQueue } from "../queues/emailQueue";
 import { prisma } from "../db/prisma";
 import { sendEmail } from "../integrations/smtp/etherealProvider";
+import { tryReserveSendSlot } from "../utils/rateLimiter";
 
 interface EmailJobData {
   emailId: string;
@@ -13,7 +15,6 @@ const worker = new Worker<EmailJobData>(
   async (job) => {
     const { emailId } = job.data;
 
-    // Step 1: look up the real email record from the database
     const email = await prisma.email.findUnique({ where: { id: emailId } });
 
     if (!email) {
@@ -21,15 +22,48 @@ const worker = new Worker<EmailJobData>(
       return;
     }
 
-    // Step 2: IDEMPOTENCY CHECK — if it's already sent, do nothing.
-    // This protects us even if the same job somehow runs twice.
     if (email.status === "SENT") {
       console.log(`Email ${emailId} already sent — skipping (idempotency).`);
       return;
     }
 
-    // Step 3: atomically claim this email so no other worker can process it
-    // at the same time. This only succeeds if the status is still SCHEDULED.
+    // RATE LIMIT CHECK — happens BEFORE we claim/process the email
+    const hourlyLimit = Number(process.env.MAX_EMAILS_PER_HOUR) || 200;
+    const rateLimitResult = await tryReserveSendSlot(email.sender, hourlyLimit);
+
+    if (!rateLimitResult.allowed) {
+      console.log(
+        `🚫 Rate limit hit for ${email.sender} (${rateLimitResult.currentCount}/${rateLimitResult.limit} this hour). Rescheduling email ${emailId} for next hour.`
+      );
+
+      // Calculate when the next hour window starts
+      const now = new Date();
+      const nextHour = new Date(now);
+      nextHour.setHours(now.getHours() + 1, 0, 0, 0); // top of the next hour
+      const delay = nextHour.getTime() - now.getTime();
+
+      // Re-add this same email as a NEW delayed job for next hour.
+      await emailQueue.add(
+        "send-email",
+        { emailId: email.id },
+        {
+          delay,
+          jobId: `email-${email.id}-retry-${now.getTime()}`,
+        }
+      );
+
+      // Keep the database's scheduledAt in sync with reality
+      await prisma.email.update({
+        where: { id: email.id },
+        data: { scheduledAt: nextHour },
+      });
+
+      // TODO: send a Slack notification here (tomorrow's task)
+
+      return; // stop here — do NOT send yet
+    }
+
+    // Atomic claim — same idempotency protection as before
     const claim = await prisma.email.updateMany({
       where: { id: emailId, status: "SCHEDULED" },
       data: { status: "PROCESSING" },
@@ -40,15 +74,15 @@ const worker = new Worker<EmailJobData>(
       return;
     }
 
-    // Step 4: actually send it
-    console.log(`Sending email ${emailId} to ${email.recipient}...`);
+    console.log(
+      `Sending email ${emailId} to ${email.recipient}... (${rateLimitResult.currentCount}/${rateLimitResult.limit} this hour)`
+    );
     const result = await sendEmail({
       to: email.recipient,
       subject: email.subject,
       body: email.body,
     });
 
-    // Step 5: record the outcome
     if (result.success) {
       await prisma.email.update({
         where: { id: emailId },
