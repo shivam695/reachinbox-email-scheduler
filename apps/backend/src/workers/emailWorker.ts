@@ -1,3 +1,5 @@
+import { sendSlackMessage } from "../integrations/slack/slackService";
+import { redisConnection as redis } from "../queues/connection";
 import "dotenv/config";
 import { Worker } from "bullmq";
 import { redisConnection } from "../queues/connection";
@@ -58,7 +60,17 @@ const worker = new Worker<EmailJobData>(
         data: { scheduledAt: nextHour },
       });
 
-      // TODO: send a Slack notification here (tomorrow's task)
+      // SLACK NOTIFICATION — but only send ONE alert per sender per hour,
+      // even if 100 jobs hit the limit at the same time.
+      const notifyKey = `slack-rate-limit-notified:${email.sender}:${rateLimitResult.hourWindow}`;
+      const isFirstToNotify = await redis.set(notifyKey, "1", "EX", 3600, "NX");
+
+      if (isFirstToNotify) {
+        await sendSlackMessage(
+          email.userId,
+          `🚨 *Email rate limit reached*\n\n*Sender:* ${email.sender}\n*Hourly limit:* ${rateLimitResult.limit}\n*Current window:* ${rateLimitResult.hourWindow}:00\nAdditional emails will be scheduled for the next available window.`
+        );
+      }
 
       return; // stop here — do NOT send yet
     }
