@@ -11,6 +11,9 @@ export default function Dashboard() {
   const [emails, setEmails] = useState<Email[]>([]);
   const [loadingEmails, setLoadingEmails] = useState(true);
   const [showCompose, setShowCompose] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Email[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
   const fetchEmails = () => {
     setLoadingEmails(true);
@@ -22,9 +25,34 @@ export default function Dashboard() {
       .finally(() => setLoadingEmails(false));
   };
 
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    setSearching(true);
+    try {
+      const res = await api.get("/api/emails/search", {
+        params: { userId: user!.id, q: searchQuery },
+      });
+      setSearchResults(res.data.results);
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
   useEffect(() => {
     fetchEmails();
   }, [tab]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      handleSearch();
+    }, 400);
+    return () => clearTimeout(timeout);
+  }, [searchQuery]);
 
   const handleLogout = async () => {
     await api.post("/api/auth/logout");
@@ -71,6 +99,16 @@ export default function Dashboard() {
 
       {/* Main content */}
       <main className="p-6 max-w-5xl mx-auto">
+        <div className="mb-4">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search emails..."
+            className="w-full bg-slate-800 text-white rounded-lg px-4 py-2 outline-none border border-slate-700 focus:border-blue-500"
+          />
+        </div>
+
         <div className="flex items-center justify-between mb-6">
           <div className="flex gap-2">
             <button
@@ -104,7 +142,15 @@ export default function Dashboard() {
         </div>
 
         <div className="bg-slate-800 rounded-xl p-4">
-          <EmailTable emails={emails} loading={loadingEmails} mode={tab} />
+          {searchQuery.trim() ? (
+            searching ? (
+              <div className="text-slate-400 text-center py-12">Searching...</div>
+            ) : (
+              <EmailTable emails={searchResults || []} loading={false} mode={tab} />
+            )
+          ) : (
+            <EmailTable emails={emails} loading={loadingEmails} mode={tab} />
+          )}
         </div>
 
         {showCompose && (
