@@ -1,3 +1,4 @@
+import cors from "cors";
 import { ensureEmailIndex, searchEmails } from "./integrations/elasticsearch/elasticsearchService";
 import {
   buildGoogleAuthUrl,
@@ -20,6 +21,12 @@ import {
 } from "./integrations/slack/slackService";
 
 const app = express();
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+  })
+);
 const PORT = 4000;
 // Set up the BullMQ live dashboard at /admin/queues
 const serverAdapter = new ExpressAdapter();
