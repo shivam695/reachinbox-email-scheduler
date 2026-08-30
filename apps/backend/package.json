@@ -12,6 +12,8 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@bull-board/api": "^9.5.0",
+    "@bull-board/express": "^9.5.0",
     "@prisma/client": "^5.14.0",
     "bullmq": "^6.3.2",
     "cookie-parser": "^1.4.7",
