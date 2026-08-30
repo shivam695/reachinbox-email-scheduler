@@ -1,3 +1,4 @@
+import { indexEmail } from "../integrations/elasticsearch/elasticsearchService";
 import { sendSlackMessage } from "../integrations/slack/slackService";
 import { redisConnection as redis } from "../queues/connection";
 import "dotenv/config";
@@ -95,8 +96,8 @@ const worker = new Worker<EmailJobData>(
       body: email.body,
     });
 
-    if (result.success) {
-      await prisma.email.update({
+        if (result.success) {
+      const updatedEmail = await prisma.email.update({
         where: { id: emailId },
         data: {
           status: "SENT",
@@ -104,6 +105,20 @@ const worker = new Worker<EmailJobData>(
           providerMessageId: result.messageId,
         },
       });
+
+      await indexEmail({
+        id: updatedEmail.id,
+        userId: updatedEmail.userId,
+        campaignId: updatedEmail.campaignId,
+        recipient: updatedEmail.recipient,
+        subject: updatedEmail.subject,
+        body: updatedEmail.body,
+        sender: updatedEmail.sender,
+        status: updatedEmail.status,
+        scheduledAt: updatedEmail.scheduledAt,
+        sentAt: updatedEmail.sentAt,
+      });
+
       console.log(`✅ Email ${emailId} sent! Preview: ${result.previewUrl}`);
     } else {
       await prisma.email.update({

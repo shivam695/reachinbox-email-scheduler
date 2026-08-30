@@ -1,3 +1,4 @@
+import { ensureEmailIndex, searchEmails } from "./integrations/elasticsearch/elasticsearchService";
 import {
   buildGoogleAuthUrl,
   exchangeGoogleCode,
@@ -103,6 +104,19 @@ app.get("/api/emails/sent", async (req, res) => {
   res.json({ count: emails.length, emails });
 });
 
+// Real endpoint: search emails (Elasticsearch-backed, scoped to logged-in user)
+app.get("/api/emails/search", async (req, res) => {
+  const userId = req.query.userId as string;
+  const query = req.query.q as string;
+
+  if (!userId || !query) {
+    return res.status(400).json({ error: "userId and q are required" });
+  }
+
+  const results = await searchEmails(userId, query);
+  res.json({ count: results.length, results });
+});
+
 // SLACK: Step 1 — redirect user to Slack's approval page
 // We pass the userId as "state" so we know who is connecting once Slack sends them back
 app.get("/api/slack/connect", (req, res) => {
@@ -177,7 +191,8 @@ app.post("/api/auth/logout", (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running at http://localhost:${PORT}`);
+  await ensureEmailIndex();
 });
 
